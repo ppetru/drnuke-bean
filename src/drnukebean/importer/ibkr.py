@@ -23,17 +23,17 @@ from ibflex import client, parser, Types
 from ibflex.enums import CashAction, BuySell
 from ibflex.client import ResponseCodeError
 
-from beancount.query import query
 from beancount.parser import options
-from beancount.ingest import importer
+from beangulp import importer
 from beancount.core import data, amount
 from beancount.core.number import D
 from beancount.core.number import Decimal
 from beancount.core import position
 from beancount.core.number import MISSING
+from beanquery import query
 
 
-class IBKRImporter(importer.ImporterProtocol):
+class IBKRImporter(importer.Importer):
     """
     Beancount Importer for the Interactive Brokers XML FlexQueries
     """
@@ -121,15 +121,15 @@ class IBKRImporter(importer.ImporterProtocol):
         return ':'.join([self.Mainaccount.replace('Assets', 'Income'),
                         self.mapSymbol(symbol), self.PnLSuffix])
 
-    def file_account(self, _):
+    def account(self, filepath):
         return self.Mainaccount
 
-    def extract(self, credsfile, existing_entries=None):
+    def extract(self, filepath, existing_entries=None):
         # the actual processing of the flex query
 
         # get the IBKR creentials ready
         try:
-            with open(credsfile.name, 'r') as f:
+            with open(filepath, 'r') as f:
                 config = yaml.safe_load(f)
                 token = config['token']
                 queryId = config['queryId']

@@ -5,4 +5,8 @@ setup(name = 'drnuke-bean',
       description = "Dr Nukes's beancount arsenal",
       package_dir={'': 'src'},
       packages=find_packages(where='src'),
+      install_requires=[
+          'beangulp',
+          'beanquery',
+      ],
       zip_safe = False)
