@@ -77,8 +77,9 @@ class IBKRImporter(importer.Importer):
         self.roc_str = "Return of Capital" # that special swiss thing
 
     def identify(self, file):
-        return self.configFile == path.basename(file.name)
+        return self.configFile == path.basename(file)
 
+    @property
     def name(self) -> str:
         return self.configFile
 
@@ -262,7 +263,7 @@ class IBKRImporter(importer.Importer):
             currency = row['currency']
             amount_ = amount.Amount(row['amount'], currency)
             text = row['description']
-            month = re.findall('\w{3} \d{4}', text)
+            month = re.findall(r'\w{3} \d{4}', text)
             if month:
                 month = month[0]
             else:
@@ -315,8 +316,8 @@ class IBKRImporter(importer.Importer):
             if self.roc_str in text:
                 isin = self.roc_str
             else:
-                isin = re.findall('\(([a-zA-Z]{2}[a-zA-Z0-9]{9}\d)\)', text)[0]
-            pershare_match = re.search('(\d*[.]\d*)(\D*)(PER SHARE)',
+                isin = re.findall(r'\(([a-zA-Z]{2}[a-zA-Z0-9]{9}\d)\)', text)[0]
+            pershare_match = re.search(r'(\d*[.]\d*)(\D*)(PER SHARE)',
                                        text, re.IGNORECASE)
             # payment in lieu of a dividend does not have a PER SHARE in description
             pershare = pershare_match.group(1) if pershare_match else ''
@@ -363,7 +364,7 @@ class IBKRImporter(importer.Importer):
             currency = row['currency']
             amount_ = amount.Amount(row['amount'], currency)
             text = row['description']
-            month = re.findall('\w{3}-\d{4}', text)[0]
+            month = re.findall(r'\w{3}-\d{4}', text)[0]
 
             # make the postings, two for interest payments
             # received and paid interests are booked on the same account
@@ -667,7 +668,7 @@ def CollapseTradeSplits(tr):
 
 def isForex(symbol):
     # retruns True if a transaction is a forex transaction.
-    b = re.search("(\w{3})[.](\w{3})", symbol)  # find something lile "USD.CHF"
+    b = re.search(r"(\w{3})[.](\w{3})", symbol)  # find something lile "USD.CHF"
     if b == None:  # no forex transaction, rather a normal stock transaction
         return False
     else:
@@ -675,7 +676,7 @@ def isForex(symbol):
 
 
 def getForexCurrencies(symbol):
-    b = re.search("(\w{3})[.](\w{3})", symbol)
+    b = re.search(r"(\w{3})[.](\w{3})", symbol)
     c = b.groups()
     return [c[0], c[1]]
 
