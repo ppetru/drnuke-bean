@@ -79,10 +79,6 @@ class IBKRImporter(importer.Importer):
     def identify(self, file):
         return self.configFile == path.basename(file)
 
-    @property
-    def name(self) -> str:
-        return self.configFile
-
     def getLiquidityAccount(self, currency):
         # Assets:Invest:IB:USD
         return ':'.join([self.Mainaccount, currency])
