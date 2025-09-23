@@ -160,17 +160,68 @@ class IBKRImporter(importer.Importer):
                 statement = pickle.load(pf)
 
         # convert to dataframes
-        poi = statement.FlexStatements[0]  # point of interest
-        # relevant items from report
-        reports = ['CashReport', 'Trades', 'CashTransactions']
-        tabs = {report: pd.DataFrame([{key: val for key, val in entry.__dict__.items()}
-                                      for entry in poi.__dict__[report]])
-                for report in reports}
+        print(f"IBKR Import Debug: Found {len(statement.FlexStatements)} FlexStatement(s)")
+
+        # Process all FlexStatements, not just the first one
+        all_cash_transactions = []
+        all_trades = []
+        all_cash_reports = []
+
+        for i, flex_statement in enumerate(statement.FlexStatements):
+            print(f"IBKR Import Debug: Processing FlexStatement {i+1}")
+
+            # Collect data from each FlexStatement
+            if hasattr(flex_statement, 'CashTransactions') and flex_statement.CashTransactions:
+                cash_trans = [{key: val for key, val in entry.__dict__.items()}
+                             for entry in flex_statement.CashTransactions]
+                all_cash_transactions.extend(cash_trans)
+                print(f"  CashTransactions: {len(cash_trans)}")
+
+            if hasattr(flex_statement, 'Trades') and flex_statement.Trades:
+                trades = [{key: val for key, val in entry.__dict__.items()}
+                         for entry in flex_statement.Trades]
+                all_trades.extend(trades)
+                print(f"  Trades: {len(trades)}")
+
+            if hasattr(flex_statement, 'CashReport') and flex_statement.CashReport:
+                cash_rpt = [{key: val for key, val in entry.__dict__.items()}
+                           for entry in flex_statement.CashReport]
+                all_cash_reports.extend(cash_rpt)
+                print(f"  CashReport: {len(cash_rpt)}")
+
+        # Create DataFrames from all FlexStatements combined
+        ct = pd.DataFrame(all_cash_transactions)
+        tr = pd.DataFrame(all_trades)
+        cr = pd.DataFrame(all_cash_reports)
+
+        print(f"IBKR Import Debug: Total combined - CashTransactions: {len(ct)}, Trades: {len(tr)}, CashReport: {len(cr)}")
+
+        # Store in tabs dict for compatibility with existing code
+        tabs = {'CashTransactions': ct, 'Trades': tr, 'CashReport': cr}
 
         # get single dataFrames
         ct = tabs['CashTransactions']
         tr = tabs['Trades']
         cr = tabs['CashReport']
+
+        # Check for raw data duplicates before processing
+        if not ct.empty:
+            print(f"IBKR Import Debug: Checking CashTransactions for duplicates...")
+            ct_before = len(ct)
+            # Check for exact duplicate rows
+            ct_dups = ct.duplicated()
+            if ct_dups.any():
+                print(f"IBKR Import Debug: Found {ct_dups.sum()} exact duplicate rows in CashTransactions")
+                ct = ct.drop_duplicates()
+                print(f"IBKR Import Debug: Removed duplicates, CashTransactions reduced from {ct_before} to {len(ct)}")
+
+            # Check for potential functional duplicates (same date, type, symbol, amount)
+            if len(ct) > 0:
+                key_cols = [col for col in ['reportDate', 'type', 'symbol', 'amount', 'currency'] if col in ct.columns]
+                if len(key_cols) >= 3:  # Need at least some key columns to detect duplicates
+                    ct_func_dups = ct.duplicated(subset=key_cols)
+                    if ct_func_dups.any():
+                        print(f"IBKR Import Debug: Found {ct_func_dups.sum()} potential functional duplicates based on key fields")
 
         # throw out IBKR jitter, mostly None
         ct.drop(columns=[col for col in ct if all(
@@ -182,7 +233,61 @@ class IBKRImporter(importer.Importer):
         transactions = self.Trades(
             tr) + self.CashTransactions(ct) + self.Balances(cr)
 
-        return transactions
+        print(f"IBKR Import Debug: Generated {len(transactions)} total transactions before deduplication")
+
+        # First, remove internal duplicates within this import
+        unique_transactions = []
+        duplicate_count = 0
+
+        for i, txn in enumerate(transactions):
+            is_internal_duplicate = False
+
+            # Only check transactions, not balances
+            if isinstance(txn, data.Transaction):
+                for existing_txn in unique_transactions:
+                    if (isinstance(existing_txn, data.Transaction) and
+                        txn.date == existing_txn.date and
+                        txn.narration == existing_txn.narration and
+                        len(txn.postings) == len(existing_txn.postings)):
+
+                        # Check if postings match
+                        postings_match = True
+                        for p1, p2 in zip(txn.postings, existing_txn.postings):
+                            if (p1.account != p2.account or
+                                p1.units != p2.units):
+                                postings_match = False
+                                break
+
+                        if postings_match:
+                            is_internal_duplicate = True
+                            duplicate_count += 1
+                            print(f"IBKR Import Debug: Removing internal duplicate - {txn.date} {txn.narration}")
+                            break
+
+            if not is_internal_duplicate:
+                unique_transactions.append(txn)
+
+        if duplicate_count > 0:
+            print(f"IBKR Import Debug: Removed {duplicate_count} internal duplicates, {len(unique_transactions)} transactions remaining")
+
+        # Filter out duplicate transactions if existing entries are provided
+        if existing:
+            new_transactions = []
+            external_duplicate_count = 0
+            for txn in unique_transactions:
+                if not is_duplicate_transaction(txn, existing):
+                    new_transactions.append(txn)
+                else:
+                    external_duplicate_count += 1
+
+            if external_duplicate_count > 0:
+                print(f"IBKR Import Debug: Filtered out {external_duplicate_count} transactions that already exist in ledger")
+                print(f"IBKR Import Debug: Final result: {len(new_transactions)} new transactions to import")
+
+            return new_transactions
+
+        print(f"IBKR Import Debug: Final result: {len(unique_transactions)} transactions to import")
+        return unique_transactions
 
     def CashTransactions(self, ct):
         """
@@ -705,6 +810,37 @@ def AmountAdd(A1, A2):
     else:
         raise ('Cannot add amounts of differnent currencies: {} and {}'.format(
             A1.currency, A1.currency))
+
+
+def is_duplicate_transaction(new_txn, existing_entries):
+    """
+    Check if a new transaction is a duplicate of an existing one.
+    Compares by date, narration, and posting amounts.
+    """
+    if not existing_entries:
+        return False
+
+    for existing in existing_entries:
+        if not isinstance(existing, data.Transaction):
+            continue
+
+        # Compare basic transaction properties
+        if (existing.date == new_txn.date and
+            existing.narration == new_txn.narration and
+            len(existing.postings) == len(new_txn.postings)):
+
+            # Compare postings (account and amount)
+            postings_match = True
+            for existing_posting, new_posting in zip(existing.postings, new_txn.postings):
+                if (existing_posting.account != new_posting.account or
+                    existing_posting.units != new_posting.units):
+                    postings_match = False
+                    break
+
+            if postings_match:
+                return True
+
+    return False
 
 
 def minus(A):
