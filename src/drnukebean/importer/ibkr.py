@@ -121,7 +121,7 @@ class IBKRImporter(importer.Importer):
     def account(self, filepath):
         return self.Mainaccount
 
-    def extract(self, filepath, existing_entries=None):
+    def extract(self, filepath, existing=None):
         # the actual processing of the flex query
 
         # get the IBKR creentials ready
@@ -135,7 +135,7 @@ class IBKRImporter(importer.Importer):
             return []
 
         # get prices of existing transactions, in case we sell something
-        # priceLookup = PriceLookup(existing_entries, config['baseCcy'])
+        # priceLookup = PriceLookup(existing, config['baseCcy'])
 
         if self.filepath is None:
             # get the report from IB. might take a while, when IB is queuing due to
