@@ -79,6 +79,7 @@ class IBKRImporter(importer.Importer):
     def identify(self, file):
         return self.configFile == path.basename(file)
 
+    @property
     def name(self):
         return self.configFile
 
