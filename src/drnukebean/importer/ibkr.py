@@ -821,6 +821,10 @@ def is_duplicate_transaction(new_txn, existing_entries):
     Check if a new transaction is a duplicate of an existing one.
     Compares by date, narration, and posting amounts.
     """
+    # Only check Transaction objects, not Balance directives or other entry types
+    if not isinstance(new_txn, data.Transaction):
+        return False
+
     if not existing_entries:
         return False
 
