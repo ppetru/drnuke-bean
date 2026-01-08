@@ -170,6 +170,7 @@ class IBKRImporter(importer.Importer):
         all_cash_transactions = []
         all_trades = []
         all_cash_reports = []
+        all_open_positions = []
 
         for i, flex_statement in enumerate(statement.FlexStatements):
             print(f"IBKR Import Debug: Processing FlexStatement {i+1}")
@@ -193,12 +194,19 @@ class IBKRImporter(importer.Importer):
                 all_cash_reports.extend(cash_rpt)
                 print(f"  CashReport: {len(cash_rpt)}")
 
+            if hasattr(flex_statement, 'OpenPositions') and flex_statement.OpenPositions:
+                positions = [{key: val for key, val in entry.__dict__.items()}
+                            for entry in flex_statement.OpenPositions]
+                all_open_positions.extend(positions)
+                print(f"  OpenPositions: {len(positions)}")
+
         # Create DataFrames from all FlexStatements combined
         ct = pd.DataFrame(all_cash_transactions)
         tr = pd.DataFrame(all_trades)
         cr = pd.DataFrame(all_cash_reports)
+        op = pd.DataFrame(all_open_positions)
 
-        print(f"IBKR Import Debug: Total combined - CashTransactions: {len(ct)}, Trades: {len(tr)}, CashReport: {len(cr)}")
+        print(f"IBKR Import Debug: Total combined - CashTransactions: {len(ct)}, Trades: {len(tr)}, CashReport: {len(cr)}, OpenPositions: {len(op)}")
 
         # Store in tabs dict for compatibility with existing code
         tabs = {'CashTransactions': ct, 'Trades': tr, 'CashReport': cr}
@@ -234,8 +242,11 @@ class IBKRImporter(importer.Importer):
             tr[col].isnull())], inplace=True)
         cr.drop(columns=[col for col in cr if all(
             cr[col].isnull())], inplace=True)
+        if not op.empty:
+            op.drop(columns=[col for col in op if all(
+                op[col].isnull())], inplace=True)
         transactions = self.Trades(
-            tr) + self.CashTransactions(ct) + self.Balances(cr)
+            tr) + self.CashTransactions(ct) + self.Balances(cr) + self.PositionBalances(op)
 
         print(f"IBKR Import Debug: Generated {len(transactions)} total transactions before deduplication")
 
@@ -705,7 +716,23 @@ class IBKRImporter(importer.Importer):
                     break
 
             if sum_lots_quantity != -row['quantity']:
-                warnings.warn(f"Lots matching failure: sell index={idx}")
+                warnings.warn(f"Lots matching failure: sell index={idx}, expected {-row['quantity']} but found {sum_lots_quantity}")
+                # Fallback: create a single posting with empty cost spec
+                # so beancount can auto-select lots using FIFO
+                fallback_cost = position.CostSpec(
+                    number_per=None,
+                    number_total=None,
+                    currency=None,
+                    date=None,
+                    label=None,
+                    merge=False)
+                lotpostings = [data.Posting(
+                    self.getAssetAccount(symbol),
+                    amount.Amount(row['quantity'], self.mapSymbol(symbol)),
+                    fallback_cost,
+                    price,
+                    None, None
+                )]
 
             postings = [
                 # data.Posting(self.getAssetAccount(symbol),  # this first posting is probably wrong
@@ -761,6 +788,39 @@ class IBKRImporter(importer.Importer):
                 None,
                 None))
         return crTransactions
+
+    def PositionBalances(self, op):
+        """
+        ABOUTME: Generate balance assertions for security positions from IB OpenPositions data.
+        ABOUTME: This helps catch discrepancies between ledger and actual broker holdings.
+        """
+        if len(op) == 0:
+            return []
+
+        positionBalances = []
+        for idx, row in op.iterrows():
+            symbol = self.mapSymbol(row['symbol'])
+            # IB uses 'position' for quantity in OpenPositions
+            quantity = row.get('position', row.get('quantity', 0))
+            if quantity == 0:
+                continue
+
+            # Get the report date - try different possible column names
+            report_date = row.get('reportDate', row.get('toDate', None))
+            if report_date is None:
+                warnings.warn(f"No date found for position {symbol}, skipping")
+                continue
+
+            meta = data.new_metadata('position_balance', 0)
+            positionBalances.append(data.Balance(
+                meta,
+                report_date + timedelta(days=1),
+                self.getAssetAccount(symbol),
+                amount.Amount(D(str(int(quantity))), symbol),
+                None,
+                None))
+
+        return positionBalances
 
 
 def CollapseTradeSplits(tr):

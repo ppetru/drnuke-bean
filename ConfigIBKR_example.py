@@ -17,8 +17,10 @@ from drnukebean.importer import ibkr
 # Section "Trades"
 # tr_columns=['buySell', 'currency', 'symbol', 'description', 'tradeDate', 'quantity',
 #        'tradePrice', 'ibCommission', 'ibCommissionCurrency', 'notes', 'cost',
-#        'openDateTime', 'levelOfDetail', 'ibOrderID', 'proceeds', 
+#        'openDateTime', 'levelOfDetail', 'ibOrderID', 'proceeds',
 #        'dateTime']
+# Section "Open Positions" (for position balance assertions)
+# op_columns=['symbol', 'position', 'reportDate', 'currency']
 
 
 # I do not know a nice way to specify the account structure. This importer is 
