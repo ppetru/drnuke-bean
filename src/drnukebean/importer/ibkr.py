@@ -619,10 +619,11 @@ class IBKRImporter(importer.Importer):
             price = amount.Amount(round(row['tradePrice'],2), currency)
             text = row['description']
 
-            number_per = D(row['tradePrice'])
-            currency_cost = currency
+            # Calculate effective price from actual proceeds to avoid rounding errors
+            # proceeds is negative for buys, so negate it
+            effective_price = round(-row['proceeds'] / row['quantity'], 4)
             cost = position.CostSpec(
-                number_per=price.number,
+                number_per=D(effective_price),
                 number_total=None,
                 currency=currency,
                 date=row['tradeDate'],
