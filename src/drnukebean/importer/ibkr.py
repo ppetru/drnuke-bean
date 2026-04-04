@@ -372,8 +372,52 @@ class IBKRImporter(importer.Importer):
 
         return ctTransactions
 
+    @staticmethod
+    def _dedup_combined_fees(fee):
+        """Remove individual fee entries when a combined entry covers them.
+
+        IB flex queries sometimes report the same charges as both individual
+        per-day rows and a single combined row on the same reportDate.  Within
+        each (reportDate, currency) group, if one entry's absolute amount equals
+        the sum of all other entries' absolute amounts, drop the others.
+        """
+        if len(fee) <= 1:
+            return fee
+
+        keep = []
+        for (report_date, currency), group in fee.groupby(['reportDate', 'currency']):
+            if len(group) <= 1:
+                keep.append(group)
+                continue
+
+            amounts = group['amount'].abs()
+            total = amounts.sum()
+
+            # Check if any single entry equals the sum of the rest
+            dropped = False
+            for idx in group.index:
+                entry_amount = amounts[idx]
+                rest_sum = total - entry_amount
+                if entry_amount == rest_sum and len(group) > 2:
+                    # This entry is the combined one; drop the rest
+                    keep.append(group.loc[[idx]])
+                    dropped = True
+                    break
+
+            if not dropped:
+                keep.append(group)
+
+        return pd.concat(keep) if keep else fee.iloc[0:0]
+
     def Fee(self, fee):
         # calculates fees from IBKR data
+
+        # IB sometimes reports the same daily fees both as individual per-day
+        # entries AND as a single combined entry on the same reportDate.
+        # Detect and remove the individual entries when a combined entry exists
+        # whose amount equals their sum within each (reportDate, currency) group.
+        fee = self._dedup_combined_fees(fee)
+
         feeTransactions = []
         for idx, row in fee.iterrows():
             currency = row['currency']
