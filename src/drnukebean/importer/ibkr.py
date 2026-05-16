@@ -40,10 +40,13 @@ IBKR_GET_STATEMENT_URL = f"{IBKR_FLEX_BASE_URL}/GetStatement"
 RETRYABLE_SEND_REQUEST_ERRORS = set(client.SERVER_BUSY) | set(client.CLIENT_THROTTLED) | {"1001", "1021"}
 
 
-def _submit_flex_request(url: str, token: str, query: str, timeout: int = 60):
+def _submit_flex_request(url: str, token: str, query: str, timeout: int = 60, extra_params=None):
+    params = {"v": "3", "t": token, "q": query}
+    if extra_params:
+        params.update(extra_params)
     response = client.requests.get(
         url,
-        params={"v": "3", "t": token, "q": query},
+        params=params,
         headers={"user-agent": "Java"},
         timeout=timeout,
     )
@@ -52,10 +55,11 @@ def _submit_flex_request(url: str, token: str, query: str, timeout: int = 60):
     return response
 
 
-def _download_flex_statement(token: str, query_id: str, max_tries: int = 12) -> bytes:
+def _download_flex_statement(token: str, query_id: str, max_tries: int = 12, period_days=None) -> bytes:
     tries = 0
+    send_params = {"p": str(period_days)} if period_days else None
     while True:
-        response = _submit_flex_request(IBKR_SEND_REQUEST_URL, token, query_id)
+        response = _submit_flex_request(IBKR_SEND_REQUEST_URL, token, query_id, extra_params=send_params)
         stmt_access = client.parse_stmt_response(response)
         if not isinstance(stmt_access, client.StatementError):
             break
@@ -188,6 +192,7 @@ class IBKRImporter(importer.Importer):
                 config = yaml.safe_load(f)
                 token = config['token']
                 queryId = config['queryId']
+                periodDays = config.get('periodDays')
         except:
             warnings.warn('cannot read IBKR credentials file. Check filepath.')
             return []
@@ -202,7 +207,7 @@ class IBKRImporter(importer.Importer):
                 # try except in case of connection interrupt
                 # Warning: queries sometimes take a few minutes until IB provides
                 # the data due to busy servers
-                response = _download_flex_statement(str(token), str(queryId))
+                response = _download_flex_statement(str(token), str(queryId), period_days=periodDays)
                 statement = parser.parse(response)
             except ResponseCodeError as E:
                 logging.exception('Error fetching report, aborting')

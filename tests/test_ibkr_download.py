@@ -80,3 +80,20 @@ def test_download_uses_current_send_request_endpoint(monkeypatch):
     ibkr._download_flex_statement("token", "query", max_tries=1)
 
     assert requested_urls[0] == ibkr.IBKR_SEND_REQUEST_URL
+
+
+def test_download_passes_period_override_to_send_request(monkeypatch):
+    request_params = []
+
+    def fake_get(url, **kwargs):
+        request_params.append(kwargs["params"])
+        if len(request_params) == 1:
+            return FakeResponse(STATEMENT_ACCESS)
+        return FakeResponse(FLEX_QUERY)
+
+    monkeypatch.setattr(ibkr.client.requests, "get", fake_get)
+
+    ibkr._download_flex_statement("token", "query", max_tries=1, period_days=60)
+
+    assert request_params[0]["p"] == "60"
+    assert "p" not in request_params[1]
