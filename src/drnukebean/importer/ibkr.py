@@ -10,6 +10,7 @@ Setup:
 
 import pandas as pd
 from datetime import datetime, timedelta
+import time
 import xml.etree.ElementTree as ET
 import warnings
 import pickle
@@ -31,6 +32,59 @@ from beancount.core.number import Decimal
 from beancount.core import position
 from beancount.core.number import MISSING
 from beanquery import query
+
+
+IBKR_FLEX_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+IBKR_SEND_REQUEST_URL = f"{IBKR_FLEX_BASE_URL}/SendRequest"
+IBKR_GET_STATEMENT_URL = f"{IBKR_FLEX_BASE_URL}/GetStatement"
+RETRYABLE_SEND_REQUEST_ERRORS = set(client.SERVER_BUSY) | set(client.CLIENT_THROTTLED) | {"1001", "1021"}
+
+
+def _submit_flex_request(url: str, token: str, query: str, timeout: int = 60):
+    response = client.requests.get(
+        url,
+        params={"v": "3", "t": token, "q": query},
+        headers={"user-agent": "Java"},
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise client.BadResponseError(response)
+    return response
+
+
+def _download_flex_statement(token: str, query_id: str, max_tries: int = 12) -> bytes:
+    tries = 0
+    while True:
+        response = _submit_flex_request(IBKR_SEND_REQUEST_URL, token, query_id)
+        stmt_access = client.parse_stmt_response(response)
+        if not isinstance(stmt_access, client.StatementError):
+            break
+        if stmt_access.ErrorCode not in RETRYABLE_SEND_REQUEST_ERRORS or tries >= max_tries:
+            raise ResponseCodeError(stmt_access.ErrorCode, stmt_access.ErrorMessage)
+        tries += 1
+        time.sleep(10)
+
+    status = 0
+    tries = 0
+    while status is not True:
+        time.sleep(status)
+        tries += 1
+        response = _submit_flex_request(
+            url=stmt_access.Url or IBKR_GET_STATEMENT_URL,
+            token=token,
+            query=stmt_access.ReferenceCode,
+        )
+        try:
+            status = client.check_statement_response(response)
+        except ResponseCodeError as error:
+            if error.code not in RETRYABLE_SEND_REQUEST_ERRORS or tries > max_tries:
+                raise
+            status = 10
+        if tries > max_tries:
+            raise client.StatementGenerationTimeout(
+                "Exceeded max number of tries while attempting download"
+            )
+    return response.content
 
 
 class IBKRImporter(importer.Importer):
@@ -148,7 +202,7 @@ class IBKRImporter(importer.Importer):
                 # try except in case of connection interrupt
                 # Warning: queries sometimes take a few minutes until IB provides
                 # the data due to busy servers
-                response = client.download(token, queryId)
+                response = _download_flex_statement(str(token), str(queryId))
                 statement = parser.parse(response)
             except ResponseCodeError as E:
                 logging.exception('Error fetching report, aborting')
